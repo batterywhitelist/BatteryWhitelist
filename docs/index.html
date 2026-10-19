@@ -140,6 +140,18 @@
             color: #8b949e;
             font-size: 12px;
         }
+        
+        /* 【关键修改】针对底部的所有链接，强制去除下划线，并加上 !important 最高优先级 */
+        .footer a {
+            text-decoration: none !important;
+            color: #8b949e;
+            transition: color 0.2s;
+        }
+        
+        /* 鼠标悬停或手机点击时稍微变色，增强交互感 */
+        .footer a:hover, .footer a:active {
+            color: #ffffff;
+        }
     </style>
 </head>
 <body>
@@ -182,7 +194,12 @@
         <div class="footer">
             <p>基于 MIT 协议开源 · 只为对抗流氓系统</p>
             <p class="quote">“买的设备是自己的，自己拥有对该设备的一切权利，厂商无权干涉。”</p><br>
-            <p class="quote">&copy; MikotoNetwork·2026 保留所有权利</p>
+            
+            <!-- 【关键修改】直接在内联样式加上 text-decoration: none; 彻底消灭下划线 -->
+            <p class="quote">
+                <a href="https://misaknetwork.top" style="text-decoration: none;">&copy; MikotoNetwork·2026 保留所有权利</a>
+            </p>
+            
         </div>
     </div>
 
