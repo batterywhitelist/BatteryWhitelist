@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 ©MikotoNetwork
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.batterywhitelist;
 
 import android.app.Activity;
@@ -44,6 +59,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
@@ -57,7 +73,7 @@ import java.util.regex.Pattern;
  * 模块的用户界面（UI）与应用选择中心。
  *
  * @author MikotoNetwork
- * @version 1.5.0
+ * @version 1.5.1
  */
 public class MainActivity extends Activity {
 
@@ -75,14 +91,12 @@ public class MainActivity extends Activity {
     private static final String OFFICIAL_WEBSITE = "https://batterywhitelist.fun";
     private static final String SOURCE_CODE_URL = "https://github.com/MikotoNetwork/BatteryWhitelist";
     private static final String VERSION_JSON_URL = "https://batterywhitelist.fun/version.json";
-    // 新增：Telegram CI 频道链接
     private static final String TELEGRAM_CHANNEL_URL = "https://t.me/BatteryWhitelist_CI";
 
     private static final long SU_TIMEOUT_SEC = 10L;
     private static final long SEARCH_DEBOUNCE_MS = 300L;
     private static final long DEPLOY_DEBOUNCE_MS = 3000L;
-    // 24h
-    private static final long UPDATE_CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000; 
+    private static final long UPDATE_CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000;
 
     private static final int REQ_EXPORT_CONFIG = 1001;
     private static final int REQ_IMPORT_CONFIG = 1002;
@@ -91,7 +105,18 @@ public class MainActivity extends Activity {
     private static final Pattern PKG_PATTERN =
             Pattern.compile("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$");
 
-    // 进程级应用列表缓存（AppItem 不含 Context，不会泄漏）
+    // 🌟 新增：系统核心组件黑名单（绝对禁止加入白名单，防止系统崩溃/变砖）
+    private static final Set<String> DANGEROUS_PACKAGES = new HashSet<>(Arrays.asList(
+            "android",
+            "com.android.systemui",
+            "com.android.settings",
+            "com.android.phone",
+            "com.android.server.telecom",
+            "com.android.bluetooth",
+            "com.android.providers.settings",
+            "com.android.permissioncontroller"
+    ));
+
     private static volatile List<AppItem> sCachedApps = null;
 
     private SharedPreferences prefs;
@@ -114,7 +139,6 @@ public class MainActivity extends Activity {
     private boolean savedToastShownOnce = false;
     private boolean isIconHidden = false;
 
-    // 记录上次已部署过的白名单，避免重复 su 部署
     private Set<String> lastDeployed = Collections.emptySet();
 
     static class AppItem {
@@ -137,7 +161,6 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
-        // 读取 EULA 内容并与其 hash 比对，若协议有更新则重新弹窗
         String eula = loadEulaFromAssets();
         if (eula == null) {
             eula = "协议文件缺失，请联系开发者。";
@@ -169,7 +192,14 @@ public class MainActivity extends Activity {
         checkForUpdates();
 
         Set<String> saved = prefs.getStringSet(KEY_LIST, Collections.emptySet());
-        if (saved != null) selectedPackages.addAll(saved);
+        if (saved != null) {
+            // 过滤掉旧版本可能存进去的高危包名
+            for (String p : saved) {
+                if (!DANGEROUS_PACKAGES.contains(p)) {
+                    selectedPackages.add(p);
+                }
+            }
+        }
 
         adapter = new AppListAdapter(this, filteredApps);
         listView.setAdapter(adapter);
@@ -186,30 +216,57 @@ public class MainActivity extends Activity {
             @Override public void afterTextChanged(Editable s) {}
         });
 
+        // 🌟 核心修改：列表点击拦截
         listView.setOnItemClickListener((parent, view, position, id) -> {
             if (position < 0 || position >= filteredApps.size()) return;
             AppItem item = filteredApps.get(position);
             boolean nowSelected = !selectedPackages.contains(item.pkg);
 
-            if (nowSelected) selectedPackages.add(item.pkg);
-            else selectedPackages.remove(item.pkg);
-
-            listView.setItemChecked(position, nowSelected);
-            savePackages();
-            scheduleDeployGuardScript();
-
-            if (!savedToastShownOnce) {
-                savedToastShownOnce = true;
-                Toast.makeText(MainActivity.this, "已保存", Toast.LENGTH_SHORT).show();
+            if (nowSelected && DANGEROUS_PACKAGES.contains(item.pkg)) {
+                // 拦截高危操作，弹出红色警告
+                showDangerousConfirmDialog(item, position, nowSelected);
+                return;
             }
+
+            applySelection(item.pkg, nowSelected, position);
         });
 
         loadAppsAsync();
     }
 
-    /**
-     * 显示协议弹窗。传入协议正文和其 hash，用户同意后写入 prefs。
-     */
+    // 统一处理选中逻辑
+    private void applySelection(String pkg, boolean nowSelected, int position) {
+        if (nowSelected) selectedPackages.add(pkg);
+        else selectedPackages.remove(pkg);
+
+        listView.setItemChecked(position, nowSelected);
+        savePackages();
+        scheduleDeployGuardScript();
+
+        if (!savedToastShownOnce) {
+            savedToastShownOnce = true;
+            Toast.makeText(MainActivity.this, "已保存", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // 高危操作二次确认弹窗
+    private void showDangerousConfirmDialog(AppItem item, int position, boolean nowSelected) {
+        new AlertDialog.Builder(this)
+                .setTitle("⚠️ 极度危险操作")
+                .setMessage("您正在尝试将系统核心组件【" + item.name + "】加入白名单。\n\n" +
+                        "此操作极大概率会导致系统崩溃、黑屏或无限重启（变砖），且可能无法通过正常方式恢复。\n\n" +
+                        "根据《用户许可协议》，若您执意继续，后果将由您自行承担。如果您不清楚自己在做什么，请立即取消。")
+                .setPositiveButton("我确定要作死", (d, w) -> {
+                    applySelection(item.pkg, nowSelected, position);
+                })
+                .setNegativeButton("取消", (d, w) -> {
+                    // 恢复选中状态
+                    listView.setItemChecked(position, selectedPackages.contains(item.pkg));
+                })
+                .setCancelable(false)
+                .show();
+    }
+
     private void showAgreementDialog(String content, String contentHash) {
         View dialogView = getLayoutInflater().inflate(R.layout.dialog_agreement, null);
         TextView agreementText = dialogView.findViewById(R.id.agreementText);
@@ -266,7 +323,6 @@ public class MainActivity extends Activity {
 
             popupMenu.getMenu().add(0, 5, 4, "导出配置");
             popupMenu.getMenu().add(0, 6, 5, "导入配置");
-            // 新增：Telegram CI 频道菜单项
             popupMenu.getMenu().add(0, 7, 6, "CI 自动构建频道");
 
             popupMenu.setOnMenuItemClickListener(item -> {
@@ -277,7 +333,7 @@ public class MainActivity extends Activity {
                     case 4: toggleLauncherIcon(); return true;
                     case 5: exportConfig(); return true;
                     case 6: importConfig(); return true;
-                    case 7: openUrl(TELEGRAM_CHANNEL_URL); return true; // 新增跳转逻辑
+                    case 7: openUrl(TELEGRAM_CHANNEL_URL); return true;
                 }
                 return false;
             });
@@ -334,7 +390,6 @@ public class MainActivity extends Activity {
             root.put("module", getPackageName());
             root.put("timestamp", System.currentTimeMillis());
 
-            // 直接使用内存里的 selectedPackages，避免依赖 prefs 落盘时机
             List<String> sorted = new ArrayList<>(selectedPackages);
             Collections.sort(sorted);
 
@@ -389,19 +444,32 @@ public class MainActivity extends Activity {
 
             final Set<String> imported = new HashSet<>();
             int skipped = 0;
+            int blocked = 0; // 🌟 新增：被拦截的高危应用数
+            
             for (int i = 0; i < arr.length(); i++) {
                 String p = arr.optString(i, null);
-                if (isValidPkg(p)) imported.add(p);
-                else skipped++;
+                if (isValidPkg(p)) {
+                    // 🌟 导入时拦截黑名单
+                    if (DANGEROUS_PACKAGES.contains(p)) {
+                        blocked++;
+                    } else {
+                        imported.add(p);
+                    }
+                } else {
+                    skipped++;
+                }
             }
 
             final int finalSkipped = skipped;
+            final int finalBlocked = blocked;
+
             new AlertDialog.Builder(this)
                     .setTitle("恢复配置")
                     .setMessage("将用备份中的 " + imported.size()
                             + " 个应用覆盖当前白名单（当前 " + selectedPackages.size()
                             + " 个）"
                             + (finalSkipped > 0 ? "\n\n已忽略 " + finalSkipped + " 个非法包名" : "")
+                            + (finalBlocked > 0 ? "\n\n⚠️ 已自动拦截剔除 " + finalBlocked + " 个系统核心高危应用！" : "")
                             + "\n\n是否继续？")
                     .setPositiveButton("恢复", (d, w) -> {
                         selectedPackages.clear();
@@ -475,49 +543,48 @@ public class MainActivity extends Activity {
         }
     }
 
-   private void checkForUpdates() {
-    // 24 小时限流
-    long last = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L);
-    if (System.currentTimeMillis() - last < UPDATE_CHECK_INTERVAL_MS) return;
-    prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, System.currentTimeMillis()).apply();
+    private void checkForUpdates() {
+        long last = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L);
+        if (System.currentTimeMillis() - last < UPDATE_CHECK_INTERVAL_MS) return;
+        prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, System.currentTimeMillis()).apply();
 
-    new UpdateChecker(this, VERSION_JSON_URL).check(new UpdateChecker.UpdateCallback() {
-        @Override
-        public void onUpdateAvailable(UpdateChecker.VersionInfo info) {
-            if (destroyed || isFinishing()) return;
+        new UpdateChecker(this, VERSION_JSON_URL).check(new UpdateChecker.UpdateCallback() {
+            @Override
+            public void onUpdateAvailable(UpdateChecker.VersionInfo info) {
+                if (destroyed || isFinishing()) return;
 
-            AlertDialog.Builder b = new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("发现新版本 " + info.versionName)
-                    .setMessage(info.updateLog)
-                    .setPositiveButton("立即更新", (d, w) -> {
-                        if (info.downloadUrl != null && !info.downloadUrl.isEmpty()) {
-                            // ★ 直接交给 UpdateChecker 下载安装
-                            UpdateChecker.downloadAndInstall(MainActivity.this, info.downloadUrl);
-                        } else {
-                            Toast.makeText(MainActivity.this,
-                                    "未配置下载链接", Toast.LENGTH_SHORT).show();
-                        }
-                    });
-            if (!info.forceUpdate) {
-                b.setNegativeButton("稍后", null);
-                b.setCancelable(true);
-            } else {
-                b.setCancelable(false);
+                AlertDialog.Builder b = new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("发现新版本 " + info.versionName)
+                        .setMessage(info.updateLog)
+                        .setPositiveButton("立即更新", (d, w) -> {
+                            if (info.downloadUrl != null && !info.downloadUrl.isEmpty()) {
+                                UpdateChecker.downloadAndInstall(MainActivity.this, info.downloadUrl);
+                            } else {
+                                Toast.makeText(MainActivity.this,
+                                        "未配置下载链接", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                if (!info.forceUpdate) {
+                    b.setNegativeButton("稍后", null);
+                    b.setCancelable(true);
+                } else {
+                    b.setCancelable(false);
+                }
+                b.show();
             }
-            b.show();
-        }
 
-        @Override
-        public void onLatest() {
-            Log.d("MainActivity", "当前已是最新版本");
-        }
+            @Override
+            public void onLatest() {
+                Log.d("MainActivity", "当前已是最新版本");
+            }
 
-        @Override
-        public void onError(String message) {
-            Log.e("MainActivity", "检查更新失败: " + message);
-        }
-    });
-}
+            @Override
+            public void onError(String message) {
+                Log.e("MainActivity", "检查更新失败: " + message);
+            }
+        });
+    }
+
     private void openUrl(String url) {
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -545,7 +612,6 @@ public class MainActivity extends Activity {
     }
 
     private void loadAppsAsync() {
-        // 进程级缓存命中，秒开
         List<AppItem> cached = sCachedApps;
         if (cached != null) {
             cachedApps.clear();
@@ -573,7 +639,6 @@ public class MainActivity extends Activity {
                 items.add(new AppItem(name, info.packageName));
             }
 
-            // 按名称排序
             try {
                 Collections.sort(items, (a, b) -> a.lowerName.compareTo(b.lowerName));
             } catch (Throwable ignored) {}
@@ -616,7 +681,6 @@ public class MainActivity extends Activity {
     }
 
     private void savePackages() {
-        // 拷贝一份快照，后台线程异步写盘
         final Set<String> snapshot = new HashSet<>(selectedPackages);
         new Thread(() -> {
             try {
@@ -693,8 +757,10 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 Set<String> snapshot = new HashSet<>(selectedPackages);
+                
+                // 🌟 终极防线：在真正写入脚本前，强制剔除黑名单包名
+                snapshot.removeAll(DANGEROUS_PACKAGES); 
 
-                // 与上次部署集合相同，跳过
                 if (snapshot.equals(lastDeployed)) return;
 
                 if (snapshot.isEmpty()) {
