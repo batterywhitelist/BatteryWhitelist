@@ -89,7 +89,7 @@ public class MainActivity extends Activity {
 
     private static final String QQ_GROUP_NUMBER = "274336917";
     private static final String OFFICIAL_WEBSITE = "https://batterywhitelist.fun";
-    private static final String SOURCE_CODE_URL = "https://github.com/MikotoNetwork/BatteryWhitelist";
+    private static final String SOURCE_CODE_URL = "https://github.com/batterywhitelist/BatteryWhitelist";
     private static final String VERSION_JSON_URL = "https://batterywhitelist.fun/version.json";
     private static final String TELEGRAM_CHANNEL_URL = "https://t.me/BatteryWhitelist_CI";
 
