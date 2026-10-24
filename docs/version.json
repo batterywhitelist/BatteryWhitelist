@@ -1,8 +1,8 @@
 {
-  "versionCode": 55,
-  "versionName": "1.5.5",
-  "updateLog": "- 修复一些已知问题！\n- 开源协议更改为Apache LICENSE V2.0\n- 增加系统应用黑名单\n- 警告⚠！ **严禁**将 Android 系统核心组件（如 `com.android.systemui`, `com.android.settings`, `com.android.phone` 等）加入白名单！",
+  "versionCode": 56,
+  "versionName": "1.5.6",
+  "updateLog": "- 转移仓库地址！",
   "downloadUrl": "https://batterywhitelist.fun/download/app-release.apk",
   "forceUpdate": false,
-  "releaseDate": "2026-10-21"
+  "releaseDate": "2026-10-22"
 }
