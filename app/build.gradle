@@ -59,7 +59,9 @@ android {
             'META-INF/com/**',
             'META-INF/com/android/build/gradle/app-metadata.properties',
             'META-INF/version-control-info.textproto',
-            'META-INF/*.kotlin_module'
+            'META-INF/*.kotlin_module',
+            'META-INF/com*'
+           // 'META-INF/version-control-info.textproto'
         ]
     }
 }
