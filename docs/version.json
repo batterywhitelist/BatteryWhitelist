@@ -1,8 +1,8 @@
 {
-  "versionCode": 57,
-  "versionName": "1.5.8",
-  "updateLog": "无更新日志",
+  "versionCode": 62,
+  "versionName": "1.6.2",
+  "updateLog": "- 由于重构失败回退！",
   "downloadUrl": "https://batterywhitelist.fun/download/app-release.apk",
   "forceUpdate": false,
-  "releaseDate": "2026-11-02"
+  "releaseDate": "2026-11-20"
 }
