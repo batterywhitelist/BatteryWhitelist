@@ -55,6 +55,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
@@ -73,7 +75,8 @@ import java.util.regex.Pattern;
  * 模块的用户界面（UI）与应用选择中心。
  *
  * @author MikotoNetwork
- * @version 1.5.1
+ * @version 1.6.1
+ * @see android.app.Activity 
  */
 public class MainActivity extends Activity {
 
@@ -82,6 +85,11 @@ public class MainActivity extends Activity {
     private static final String KEY_AGREED = "user_agreed_agreement";
     private static final String KEY_AGREED_HASH = "user_agreed_eula_hash";
     private static final String KEY_LAST_UPDATE_CHECK = "last_update_check";
+
+    // 🌟 新增：EULA 网络加载相关
+    private static final String EULA_URL = "https://batterywhitelist.fun/EULA.txt";
+    private static final String KEY_EULA_CACHE = "eula_text_cache";
+    private static final int EULA_TIMEOUT_MS = 4000;
 
     private static final String GUARD_SCRIPT_PATH = "/data/adb/service.d/battery_guard.sh";
     private static final String GUARD_SCRIPT_DIR = "/data/adb/service.d";
@@ -141,6 +149,9 @@ public class MainActivity extends Activity {
 
     private Set<String> lastDeployed = Collections.emptySet();
 
+    // 🌟 新增：加载提示弹窗引用，便于 onDestroy 时清理
+    private AlertDialog eulaLoadingDialog;
+
     static class AppItem {
         final String name;
         final String lowerName;
@@ -161,23 +172,115 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
-        String eula = loadEulaFromAssets();
-        if (eula == null) {
-            eula = "协议文件缺失，请联系开发者。";
-        }
-        String eulaHash = sha256Hex(eula);
+        // 🌟 改为异步加载 EULA（网络 → 缓存 → assets）
+        checkEulaAsync();
+    }
+
+    /* ==================== EULA 加载逻辑 ==================== */
+
+    private void checkEulaAsync() {
+        eulaLoadingDialog = new AlertDialog.Builder(this)
+                .setMessage("正在获取最新用户协议…")
+                .setCancelable(false)
+                .create();
+        eulaLoadingDialog.show();
+
+        new Thread(() -> {
+            String content = null;
+            boolean fromNetwork = false;
+            try {
+                content = downloadText(EULA_URL, EULA_TIMEOUT_MS);
+                fromNetwork = true;
+                prefs.edit().putString(KEY_EULA_CACHE, content).apply();
+            } catch (Throwable ex) {
+                Log.w("MainActivity", "EULA 网络加载失败，回退到缓存/内置", ex);
+                content = prefs.getString(KEY_EULA_CACHE, null);
+                if (content == null) content = loadEulaFromAssets();
+                if (content == null) content = "协议文件缺失，请联系开发者。";
+            }
+            final String finalContent = content;
+            final boolean finalFromNetwork = fromNetwork;
+            uiHandler.post(() -> {
+                dismissEulaLoading();
+                if (destroyed || isFinishing()) return;
+                handleEula(finalContent, finalFromNetwork);
+            });
+        }, "EulaLoader").start();
+    }
+
+    private void handleEula(String content, boolean fromNetwork) {
+        String eulaHash = sha256Hex(content);
         String agreedHash = prefs.getString(KEY_AGREED_HASH, "");
         boolean agreed = prefs.getBoolean(KEY_AGREED, false)
                 && eulaHash != null
                 && eulaHash.equals(agreedHash);
 
-        if (!agreed) {
-            showAgreementDialog(eula, eulaHash);
-            return;
+        if (agreed) {
+            initApp();
+            // 若本次是走缓存/内置内容，说明网络刚才失败，后台再静默校准一次
+            if (!fromNetwork) syncEulaSilently(eulaHash);
+        } else {
+            showAgreementDialog(content, eulaHash);
         }
-
-        initApp();
     }
+
+    /**
+     * 已同意但本地内容是缓存/内置时，后台静默拉一次线上最新内容，
+     * 如果 hash 变了（协议更新了），重新弹窗让用户确认。
+     */
+    private void syncEulaSilently(String currentHash) {
+        new Thread(() -> {
+            try {
+                String remote = downloadText(EULA_URL, EULA_TIMEOUT_MS);
+                prefs.edit().putString(KEY_EULA_CACHE, remote).apply();
+                String remoteHash = sha256Hex(remote);
+                if (remoteHash != null && !remoteHash.equals(currentHash)) {
+                    uiHandler.post(() -> {
+                        if (destroyed || isFinishing()) return;
+                        showAgreementDialog(remote, remoteHash);
+                    });
+                }
+            } catch (Throwable ignored) {
+                // 静默失败即可，不影响主流程
+            }
+        }, "EulaSync").start();
+    }
+
+    private void dismissEulaLoading() {
+        if (eulaLoadingDialog != null) {
+            try { eulaLoadingDialog.dismiss(); } catch (Throwable ignored) {}
+            eulaLoadingDialog = null;
+        }
+    }
+
+    private static String downloadText(String urlStr, int timeoutMs) throws IOException {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(urlStr).openConnection();
+            c.setConnectTimeout(timeoutMs);
+            c.setReadTimeout(timeoutMs);
+            c.setRequestMethod("GET");
+            c.setRequestProperty("Cache-Control", "no-cache");
+            c.setRequestProperty("User-Agent", "BatteryWhitelist/1.5.1");
+            int code = c.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new IOException("HTTP " + code);
+            }
+            try (InputStream in = c.getInputStream()) {
+                ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+                String s = bo.toString("UTF-8");
+                if (s.trim().isEmpty()) throw new IOException("empty body");
+                return s;
+            }
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /* ==================== EULA 加载逻辑结束 ==================== */
 
     private void initApp() {
         setContentView(R.layout.activity_main);
@@ -290,6 +393,9 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    /**
+     * 从 assets 读取内置 EULA，作为网络与缓存均不可用时的最终兜底。
+     */
     private String loadEulaFromAssets() {
         try (InputStream is = getAssets().open("EULA.txt")) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -306,6 +412,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        dismissEulaLoading();
         super.onDestroy();
         if (searchRunnable != null) uiHandler.removeCallbacks(searchRunnable);
         if (deployRunnable != null) uiHandler.removeCallbacks(deployRunnable);
@@ -445,7 +552,7 @@ public class MainActivity extends Activity {
             final Set<String> imported = new HashSet<>();
             int skipped = 0;
             int blocked = 0; // 🌟 新增：被拦截的高危应用数
-            
+
             for (int i = 0; i < arr.length(); i++) {
                 String p = arr.optString(i, null);
                 if (isValidPkg(p)) {
@@ -757,9 +864,9 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 Set<String> snapshot = new HashSet<>(selectedPackages);
-                
+
                 // 🌟 终极防线：在真正写入脚本前，强制剔除黑名单包名
-                snapshot.removeAll(DANGEROUS_PACKAGES); 
+                snapshot.removeAll(DANGEROUS_PACKAGES);
 
                 if (snapshot.equals(lastDeployed)) return;
 
