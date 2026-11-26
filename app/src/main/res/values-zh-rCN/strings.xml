@@ -9,4 +9,5 @@
     <string name="empty_hint">没有匹配的应用</string>
     <string name="more">更多选项</string>
     <string name="Loading">加载中...</string>
+    <string name="description">阻止 ColorOS 恢复电池优化</string>
 </resources>
