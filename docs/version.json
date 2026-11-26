@@ -1,8 +1,8 @@
 {
-  "versionCode": 63,
-  "versionName": "1.6.3",
-  "updateLog": "- v1.6.3正式版！新增从网络侧加载用户协议功能！",
+  "versionCode": 64,
+  "versionName": "1.6.4",
+  "updateLog": "- v1.6.4正式版！ 补全模块描述",
   "downloadUrl": "https://batterywhitelist.fun/download/app-release.apk",
   "forceUpdate": false,
-  "releaseDate": "2026-11-20"
+  "releaseDate": "2026-11-26"
 }
