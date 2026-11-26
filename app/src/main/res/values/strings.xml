@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="xposed_description">Prevent ColorOS from restoring battery optimization</string>
-    <string name="description">Give Chen Xi a back massage.</string>
+    <string name="xposed_description">Prevent ColorOS from restoring battery optimization Give Chen Xi a back massage.</string>
     <string name="EditText_hint">Search for app name or package name...</string>
     <string name="title">Check the apps you want to protect (to prevent them from being frozen by ColorOS).</string>
     <string name="app_name">BatteryWhitelist</string>
