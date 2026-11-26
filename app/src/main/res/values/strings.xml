@@ -9,5 +9,5 @@
     <string name="empty_hint">No matching apps</string>
     <string name="more">More options</string>
     <string name="Loading">Loading...</string>
-    <string name ="description">Prevent ColorOS Recovery battery optimization</string>
+    
 </resources>
